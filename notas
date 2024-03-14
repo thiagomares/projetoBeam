@@ -1,0 +1,9 @@
+
+    df = (
+        pipeline 
+        | 'Read Excel' >> beam.Create(['./dados/Prova-Excel - Vagas BH (1).xlsx'])
+        | beam.Map(read_excel, sheet_name='Auxiliar - Cidade x Regional')
+        #| 'enviando dados para o banco' >> beam.Map(insert_data, tabela='REGIONAIS', campos=('CIDADE', 'REGIONAL'))
+        | beam.Map(retorna_dados)
+        | beam.Map(print)
+    )
