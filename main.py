@@ -67,15 +67,11 @@ def retorna_dados(ignorer):
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM REGIONAIS')
             records = cursor.fetchall()
-            print('Total de registros: ', cursor.rowcount)
-            for row in records:
-                print(row)
     except my.Error as e:
         print(e)
     finally:
         if 'conn' in locals() or 'conn' in globals():
             conn.close()
-            print('MySQL connection is closed')
     return records
 
 
@@ -89,12 +85,42 @@ def agrupa_dicionario(dados):
 def chave_cidade(dados):
     for chave in dados:
         yield (chave['cidade'], chave)
+        
+def coleta_cidade(dados):
+    for dado in dados:
+        yield (dado[1].title(), dado[2])
 
+def normaliza_cidade(dados):
+    return (dados[0].title(), dados[1])
 
 def converte_datetime(dados):
     dados['data_encaminhamento'] = pd.to_datetime(dados['data_encaminhamento'])
     dados['data_distribuicao'] = pd.to_datetime(dados['data_distribuicao'])
     return dados
+
+def renda(elementos):
+    cidade, dados = elementos
+    for dado in dados:
+        dado['renda'] = dado['renda']
+        yield (cidade, dado['renda'])
+
+def arredonda_renda(elementos):
+    cidade, renda = elementos
+    return (cidade.title(), round(renda, 2))
+
+def remove_valores_nulos(dados):
+    if dados[1]['renda'] and dados[1]['regionais']:
+        return dados
+
+
+def remove_duplicados(dados):
+    if len(dados[1]['regionais']) > 1:
+        dados[1]['regionais'].pop()
+    return dados
+
+def del_none(elementos):
+    if elementos != None:
+        yield elementos
 
 
 # read to pcollection excel file
@@ -106,7 +132,8 @@ with beam.Pipeline(options=pipe_opts) as pipeline:
         | beam.Map(read_excel, sheet_name='Auxiliar - Cidade x Regional')
         # | 'enviando dados para o banco' >> beam.Map(insert_data, tabela='REGIONAIS', campos=('CIDADE', 'REGIONAL'))
         | beam.Map(retorna_dados)
-        | beam.Map(print)
+        | beam.FlatMap(coleta_cidade)
+        | beam.Map(normaliza_cidade)
     )
     trata_valores = (
         pipeline
@@ -114,6 +141,17 @@ with beam.Pipeline(options=pipe_opts) as pipeline:
         | "carrega dados" >> beam.Map(read_excel, sheet_name='Base Encaminhamentos')
         | "convertendo para dicionario" >> beam.Map(agrupa_dicionario)
         | "cria chave cidade" >> beam.FlatMap(chave_cidade)
-        | 'imprime valores' >> beam.Map(print)
+        | "Agrupando os dados" >> beam.GroupByKey()
+        | "calcula a renda" >> beam.FlatMap(renda)
+        | "media de renda" >> beam.combiners.Mean.PerKey()
+        | "Arredonda renda" >> beam.Map(arredonda_renda)
+    )
+    unindo_dados = (
+        ({'renda': trata_valores, 'regionais':df}) 
+        | beam.CoGroupByKey()
+        | "remove valores nulos" >> beam.Map(remove_valores_nulos)
+        | "del none" >> beam.FlatMap(del_none)
+        | "remove duplicados" >> beam.Map(remove_duplicados)
+        | "Imprimindo dados" >> beam.Map(print)
     )
 pipeline.run()
