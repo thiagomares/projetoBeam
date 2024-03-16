@@ -7,7 +7,6 @@ import pandas as pd
 import pyodbc
 from sqlalchemy import create_engine
 import mysql.connector as my
-from datetime import date
 
 
 pipe_opts = PipelineOptions(argc=None)
@@ -122,6 +121,38 @@ def del_none(elementos):
     if elementos != None:
         yield elementos
 
+def retorna_apenas_regiao(dados):
+    return (str(dados[1]['regionais'][0]), float(dados[1]['renda'][0]))
+
+def envia_Dados(elementos, tabela):
+    config = {
+        'host': 'localhost',
+        'database': 'dados_tratados',
+        'user': 'thiagomares',
+        'password': 'Ferreira13',
+        'raise_on_warnings': True
+    }
+    
+    
+    
+    try:
+        conn = my.connect(**config)
+        if conn.is_connected():
+            print('Connected to MySQL database')
+            cursor = conn.cursor()
+            # Insert data into MySQL
+    
+            data = str(date.today())
+            cursor.execute(
+                f"INSERT INTO {tabela} VALUES {(elementos[0], elementos[1], data)}")
+            conn.commit()
+    except my.Error as e:
+        print(e)
+    finally:
+        if 'conn' in locals() or 'conn' in globals():
+            conn.close()
+            print('MySQL connection is closed')
+
 
 # read to pcollection excel file
 with beam.Pipeline(options=pipe_opts) as pipeline:
@@ -144,7 +175,7 @@ with beam.Pipeline(options=pipe_opts) as pipeline:
         | "Agrupando os dados" >> beam.GroupByKey()
         | "calcula a renda" >> beam.FlatMap(renda)
         | "media de renda" >> beam.combiners.Mean.PerKey()
-        | "Arredonda renda" >> beam.Map(arredonda_renda)
+        
     )
     unindo_dados = (
         ({'renda': trata_valores, 'regionais':df}) 
@@ -152,6 +183,9 @@ with beam.Pipeline(options=pipe_opts) as pipeline:
         | "remove valores nulos" >> beam.Map(remove_valores_nulos)
         | "del none" >> beam.FlatMap(del_none)
         | "remove duplicados" >> beam.Map(remove_duplicados)
-        | "Imprimindo dados" >> beam.Map(print)
+        | "excluindo cidades" >> beam.Map(retorna_apenas_regiao)
+        | "somando renda" >> beam.combiners.Mean.PerKey()
+        | "Arredonda renda" >> beam.Map(arredonda_renda)
+        | "enviando dados" >> beam.Map(envia_Dados, tabela='MEDIA_REGIAO')
     )
 pipeline.run()
